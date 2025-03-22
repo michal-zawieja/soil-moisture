@@ -4,6 +4,29 @@ from umqtt.simple import MQTTClient
 import machine
 import random
 import ujson as json
+import network
+import config
+
+# WiFi configuration
+SSID = config.SSID
+PASSWORD = config.PASSWORD
+# Default  MQTT_BROKER to connect to
+MQTT_BROKER = config.MQTT_BROKER
+PUBLISH_TOPIC = config.PUBLISH_TOPIC
+CLIENT_ID = ubinascii.hexlify(machine.unique_id())
+
+def connect_wifi():
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    wlan.connect(SSID, PASSWORD)
+    
+    print(f"Connecting to WiFi network: {SSID}")
+    while not wlan.isconnected():
+        time.sleep(1)
+        print("Waiting for connection...")
+    
+    print("Connected to WiFi")
+    print("Network config:", wlan.ifconfig())
 
 class BaseEntity(object):
 
@@ -29,23 +52,6 @@ class BaseEntity(object):
     def publish_state(self, state):
         self.mqtt.publish(self.state_topic, state)
 
-class BinarySensor(BaseEntity):
-
-    def __init__(self, mqtt, name, object_id, node_id=None,
-            discovery_prefix=b'homeassistant', extra_conf=None):
-
-        super().__init__(mqtt, name, b'binary_sensor', object_id, node_id,
-                discovery_prefix, extra_conf)
-
-    def publish_state(self, state):
-        self.mqtt.publish(self.state_topic, b'ON' if state else b'OFF')
-            
-    def on(self):
-        self.publish_state(True)
-
-    def off(self):
-        self.publish_state(False)
-
 class Sensor(BaseEntity):
 
     def __init__(self, mqtt, name, object_id, node_id=None,
@@ -53,55 +59,6 @@ class Sensor(BaseEntity):
 
         super().__init__(mqtt, name, b'sensor', object_id, node_id,
                 discovery_prefix, extra_conf)
-
-class EntityGroup(object):
-
-    def __init__(self, mqtt, node_id, discovery_prefix=b'homeassistant',
-            extra_conf=None):
-        self.mqtt = mqtt
-        self.node_id = node_id
-        self.discovery_prefix = discovery_prefix
-        # Group wide extra conf, gets passed to sensors
-        self.extra_conf = extra_conf
-        # Read state_topic from config if provided
-        if extra_conf and "state_topic" in extra_conf:
-            self.state_topic = extra_conf["state_topic"]
-        else:
-            self.state_topic = discovery_prefix + b'/sensor/' + node_id + b'/state'
-            extra_conf["state_topic"] = self.state_topic
-        self.entities = []
-
-    def _update_extra_conf(self, extra_conf):
-        if "value_template" not in extra_conf:
-            raise Exception("Groupped sensors need value_template to be set.")
-        extra_conf.update(self.extra_conf)
-
-    def create_binary_sensor(self, name, object_id, extra_conf):
-        self._update_extra_conf(extra_conf)
-        bs = BinarySensor(self.mqtt, name, object_id, self.node_id,
-                self.discovery_prefix, extra_conf)
-        self.entities.append(bs)
-        return bs
-
-    def create_sensor(self, name, object_id, extra_conf):
-        self._update_extra_conf(extra_conf)
-        s = Sensor(self.mqtt, name, object_id, self.node_id,
-                self.discovery_prefix, extra_conf)
-        self.entities.append(s)
-        return s
-
-    def publish_state(self, state):
-        self.mqtt.publish(self.state_topic, bytes(json.dumps(state), 'utf-8'))
-
-    def remove_group(self):
-        for e in self.entities:
-            e.remove_entity()
-
-
-# Default  MQTT_BROKER to connect to
-MQTT_BROKER = "192.168.1.130"
-CLIENT_ID = ubinascii.hexlify(machine.unique_id())
-PUBLISH_TOPIC = b"homeassistant/sensor/plant_sensor_1/moisture/config"
 
 # Setup built in PICO LED as Output
 led = machine.Pin("LED",machine.Pin.OUT)
@@ -120,11 +77,13 @@ def get_moisture_reading():
     return random.randint(20, 50)
     
 def main():
+    connect_wifi()
+
     print(f"Begin connection with MQTT Broker :: {MQTT_BROKER}")
     mqttClient = MQTTClient(CLIENT_ID, MQTT_BROKER, keepalive=60)
     mqttClient.connect()
 
-    print(f"Connected to MQTT  Broker :: {MQTT_BROKER}, and waiting for callback function to be called!")
+    print(f"Connected to MQTT  Broker :: {MQTT_BROKER}!")
 
     temp_config = { "unit_of_measurement": "%", "device_class": "moisture" }
     temp = Sensor(mqttClient, b"moisture_sensor", b"sensorid", extra_conf=temp_config)
@@ -141,4 +100,3 @@ if __name__ == "__main__":
         except OSError as e:
             print("Error: " + str(e))
             reset()
-
